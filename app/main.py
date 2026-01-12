@@ -6,37 +6,35 @@ app = FastAPI(title="Stock Price API")
 @app.get("/price/{symbol}")
 def get_stock_price(symbol: str):
     try:
+        # 1. Initialize ticker (Works for AAPL, INTC, and VFIAX)
         ticker = yf.Ticker(symbol)
 
-        # Strategy 1: Attempt to get price from fast_info
-        info = ticker.fast_info
-        price = None
-        if info is not None:
-            price = info.get('last_price')
-            currency = info.get('currency', 'USD')
+        # 2. Strategy: Use history with a 5-day window for maximum compatibility
+        # Index funds/Mutual funds don't update intraday, so we look at the last few days
+        hist = ticker.history(period="5d")
 
-        # Strategy 2: Fallback to history if fast_info is empty or None
-        if price is None:
-            # Download the last 1 day of data
-            hist = ticker.history(period="1d")
-            if not hist.empty:
-                # Get the last closing price from the dataframe
-                price = hist['Close'].iloc[-1]
-                currency = ticker.info.get('currency', 'USD')
+        if hist.empty:
+            # Last resort: try to get the 'previousClose' from info if history is empty
+            price = ticker.info.get('previousClose')
+            currency = ticker.info.get('currency', 'USD')
+        else:
+            # Get the very last valid closing price in the 5-day window
+            price = hist['Close'].iloc[-1]
+            currency = ticker.info.get('currency', 'USD')
 
-        # Final check if both strategies failed
         if price is None:
-            raise HTTPException(status_code=404, detail="Stock symbol not found or price unavailable")
+            raise HTTPException(status_code=404, detail=f"Data for {symbol} not found")
 
         return {
             "symbol": symbol.upper(),
             "current_price": round(float(price), 2),
-            "currency": currency
+            "currency": currency,
+            "type": "Index/Mutual Fund" if len(symbol) == 5 and symbol.endswith('X') else "Stock/ETF"
         }
-    except HTTPException as http_exc:
-        raise http_exc
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        print(f"Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
 
 if __name__ == "__main__":
     import uvicorn
